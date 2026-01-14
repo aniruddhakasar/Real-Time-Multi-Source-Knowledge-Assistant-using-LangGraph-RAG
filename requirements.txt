@@ -1,0 +1,16 @@
+langchain
+langchain-community
+langgraph
+langchain-openai
+sentence-transformers
+faiss-cpu
+chromadb
+fastapi
+uvicorn
+streamlit
+ragas
+python-dotenv
+pypdf
+beautifulsoup4
+requests
+sentence-transformers[cross-encoder]
