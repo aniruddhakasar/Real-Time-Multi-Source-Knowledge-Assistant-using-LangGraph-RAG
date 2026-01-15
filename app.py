@@ -22,7 +22,7 @@ import time
 
 from src.rag import ask_question, get_pipeline
 from src.guardrails import get_safety_guidelines
-from src.logger import logger, log_error, PerformanceTracker
+from src.logger import logger, log_error, PerformanceTracker, chat_logger, log_chat_interaction, log_session_event, log_user_activity, log_system_event
 from src.utils import (
     parse_query, IntentType, ERROR_MESSAGES, 
     format_error_message, truncate_text
@@ -40,7 +40,18 @@ st.set_page_config(
     }
 )
 
-# ==================== Enhanced Color Scheme ====================
+# Log system startup
+log_system_event(
+    event_type="app_startup",
+    details="Expert RAG Assistant v2.0 started",
+    metadata={
+        "version": "2.0",
+        "streamlit_version": st.__version__,
+        "timestamp": datetime.now().isoformat()
+    }
+)
+
+# ==================== Color Scheme ====================
 COLORS = {
     "primary": "#667EEA",        # Modern Blue
     "secondary": "#764BA2",      # Purple Accent
@@ -661,16 +672,38 @@ def create_new_session():
     # Save to disk
     save_session(session_id, st.session_state.chat_sessions[session_id])
     st.session_state.current_session = session_id
+
+    # Log session creation
+    log_session_event(
+        session_id=session_id,
+        user_id=session_id,  # Using session_id as user_id for now
+        event_type="created",
+        details=f"Title: Conversation {title_number}",
+        metadata={"total_sessions": len(st.session_state.chat_sessions)}
+    )
+
     return session_id
 
 def switch_session(session_id):
     """Switch to a different chat session"""
     if session_id in st.session_state.chat_sessions:
+        previous_session = st.session_state.current_session
         st.session_state.current_session = session_id
+
+        # Log session switch
+        log_session_event(
+            session_id=session_id,
+            user_id=session_id,
+            event_type="switched_to",
+            details=f"From session: {previous_session}",
+            metadata={"message_count": len(st.session_state.chat_sessions[session_id]["messages"])}
+        )
 
 def delete_session(session_id):
     """Delete a chat session"""
     if session_id in st.session_state.chat_sessions and session_id != "default":
+        message_count = len(st.session_state.chat_sessions[session_id]["messages"])
+
         # Delete from memory
         del st.session_state.chat_sessions[session_id]
         # Delete from disk
@@ -694,6 +727,15 @@ def delete_session(session_id):
         # Switch to default if current session was deleted
         if st.session_state.current_session == session_id:
             st.session_state.current_session = "default"
+
+        # Log session deletion
+        log_session_event(
+            session_id=session_id,
+            user_id=session_id,
+            event_type="deleted",
+            details=f"Messages deleted: {message_count}",
+            metadata={"switched_to_default": st.session_state.current_session == "default"}
+        )
 
 def get_current_messages():
     """Get messages for current session"""
@@ -723,12 +765,13 @@ with col3:
 st.divider()
 
 # ==================== Navigation Tabs ====================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🤖 Chat Assistant",
     "📊 Dashboard",
     "📈 Analytics",
     "⚙️ Settings",
-    "🛡️ Safety & Guidelines"
+    "🛡️ Safety & Guidelines",
+    "📋 System Logs"
 ])
 
 # ======================= TAB 1: CHAT ASSISTANT =======================
@@ -864,17 +907,46 @@ with tab1:
 
         with col2:
             if st.button("🗑️ Clear Chat", help="Clear current conversation"):
+                message_count = len(st.session_state.chat_sessions[st.session_state.current_session]["messages"])
                 if st.session_state.current_session != "default":
                     st.session_state.chat_sessions[st.session_state.current_session]["messages"] = []
                     # Save cleared session to disk
                     save_session(st.session_state.current_session, st.session_state.chat_sessions[st.session_state.current_session])
+
+                    # Log session clear
+                    log_session_event(
+                        session_id=st.session_state.current_session,
+                        user_id=st.session_state.current_session,
+                        event_type="cleared",
+                        details=f"Cleared {message_count} messages",
+                        metadata={"session_type": "named"}
+                    )
                 else:
                     st.session_state.chat_sessions["default"]["messages"] = []
-                    # Note: We don't save the default session to disk as it's always recreated
+
+                    # Log default session clear
+                    log_session_event(
+                        session_id="default",
+                        user_id="default",
+                        event_type="cleared",
+                        details=f"Cleared {message_count} messages",
+                        metadata={"session_type": "default"}
+                    )
                 st.rerun()
 
     # Process user input
     if prompt:
+        # Get user identifier (use session ID as user ID for now)
+        user_id = st.session_state.current_session
+
+        # Log user activity
+        log_user_activity(
+            user_id=user_id,
+            activity_type="chat_message",
+            details=f"Message length: {len(prompt)} chars",
+            session_id=st.session_state.current_session
+        )
+
         # Add user message to current session
         add_message_to_current_session({"role": "user", "content": prompt})
         st.session_state.query_count += 1
@@ -888,6 +960,17 @@ with tab1:
             answer, sources = ask_question(prompt, current_messages)
             response_time = time.time() - start_time
             st.session_state.avg_response_time.append(response_time)
+
+        # Log chat interaction
+        log_chat_interaction(
+            session_id=st.session_state.current_session,
+            user_id=user_id,
+            user_message=prompt,
+            assistant_response=answer,
+            response_time=response_time,
+            sources_count=len(sources) if sources else 0,
+            intent="detected"  # Could be enhanced to detect actual intent
+        )
 
         # Add assistant response to current session
         add_message_to_current_session({
@@ -1396,6 +1479,98 @@ with tab5:
                 st.json(metadata)
         else:
             st.warning("Please enter a query to test.")
+
+# ======================= TAB 6: SYSTEM LOGS =======================
+with tab6:
+    st.markdown("""
+        <h2 class='section-title'>📋 System Logs & Analytics</h2>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+        <div style='background: linear-gradient(135deg, #10B981 0%, #059669 100%); 
+                    color: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 2rem;'>
+        <h3 style='margin: 0 0 1rem 0; color: white;'>📊 Activity Monitoring</h3>
+        <p style='margin: 0; font-size: 1.1rem; line-height: 1.6;'>
+        Comprehensive logging system tracks all chat interactions, session management, and system events. 
+        Monitor usage patterns, performance metrics, and user activity in real-time.
+        </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Import logging functions
+    from src.logger import get_chat_logs_summary
+
+    # Get log summary
+    log_summary = get_chat_logs_summary(days=30)
+
+    # Display key metrics
+    st.markdown("### 📈 Key Metrics")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Interactions", log_summary.get("total_interactions", 0))
+    with col2:
+        st.metric("Active Sessions", log_summary.get("total_sessions", 0))
+    with col3:
+        st.metric("Unique Users", log_summary.get("total_users", 0))
+    with col4:
+        avg_time = log_summary.get("avg_response_time", 0)
+        st.metric("Avg Response Time", f"{avg_time:.2f}s")
+
+    # Intent distribution
+    st.markdown("### 🎯 Intent Distribution")
+    intents = log_summary.get("intents", {})
+    if intents:
+        intent_df = pd.DataFrame(list(intents.items()), columns=["Intent", "Count"])
+        st.bar_chart(intent_df.set_index("Intent"))
+    else:
+        st.info("No chat interactions logged yet.")
+
+    # Daily activity
+    st.markdown("### 📅 Daily Activity (Last 30 Days)")
+    daily_stats = log_summary.get("daily_stats", {})
+    if daily_stats:
+        daily_df = pd.DataFrame(list(daily_stats.items()), columns=["Date", "Activity"])
+        daily_df = daily_df.sort_values("Date")
+        st.line_chart(daily_df.set_index("Date"))
+    else:
+        st.info("No activity data available.")
+
+    # Recent logs viewer
+    st.markdown("### 📝 Recent Log Entries")
+    try:
+        log_file = Path("logs/chat_sessions/chat_sessions.log")
+        if log_file.exists():
+            with open(log_file, 'r') as f:
+                lines = f.readlines()[-20:]  # Last 20 entries
+
+            if lines:
+                log_text = ""
+                for line in reversed(lines):  # Most recent first
+                    # Format for display
+                    parts = line.strip().split(' | ', 5)
+                    if len(parts) >= 6:
+                        timestamp, level, session, user, msg_type, details = parts
+                        log_text += f"**{timestamp}** [{level}] {session} | {user} | {msg_type}\n"
+                        log_text += f"*{details}*\n\n"
+
+                st.text_area("Recent Logs", log_text, height=300, disabled=True)
+            else:
+                st.info("No log entries found.")
+        else:
+            st.warning("Log file not found.")
+    except Exception as e:
+        st.error(f"Error reading logs: {str(e)}")
+
+    # Log controls
+    st.markdown("### 🛠️ Log Management")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Refresh Analytics"):
+            st.rerun()
+    with col2:
+        if st.button("🗑️ Clear Old Logs (30+ days)"):
+            # This would need implementation
+            st.info("Log cleanup feature coming soon.")
 
 # ==================== Footer ====================
 st.divider()
