@@ -1,16 +1,47 @@
-langchain
-langchain-community
-langgraph
-langchain-openai
-sentence-transformers
-faiss-cpu
-chromadb
-fastapi
-uvicorn
-streamlit
-ragas
-python-dotenv
-pypdf
-beautifulsoup4
-requests
-sentence-transformers[cross-encoder]
+# Core LLM Framework
+langchain==0.1.20
+langchain-community==0.0.38
+langchain-openai==0.1.8
+langgraph==0.0.47
+langchain-core==0.1.43
+
+# Vector Databases
+faiss-cpu==1.7.4
+pinecone-client==3.2.2
+chromadb==0.5.3
+
+# LLM & Embedding Models
+sentence-transformers==3.0.1
+openai==1.39.0
+
+# Web Framework
+streamlit==1.38.0
+fastapi==0.115.0
+uvicorn==0.28.0
+
+# Data Processing
+pandas==2.2.2
+numpy==1.26.4
+scipy==1.14.1
+
+# PDF & Document Processing
+pypdf==4.2.0
+beautifulsoup4==4.12.3
+requests==2.32.3
+
+# Visualization
+plotly==5.24.0
+matplotlib==3.9.1
+
+# Evaluation
+ragas==0.1.14
+pydantic==2.7.4
+
+# Configuration & Logging
+python-dotenv==1.0.1
+pydantic-settings==2.2.1
+
+# Development & Utilities
+types-requests==2.32.0.20240622
+typing-extensions==4.12.2
+tqdm==4.66.4

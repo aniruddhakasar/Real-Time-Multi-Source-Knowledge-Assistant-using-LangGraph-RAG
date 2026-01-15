@@ -1,125 +1,616 @@
+"""Professional Streamlit application for Expert RAG Chatbot.
+
+A production-grade web interface featuring:
+- Multi-tab interface for different functionalities
+- Real-time chat with persistent sessions
+- Performance analytics and monitoring
+- Safety guardrails management
+- Advanced configuration options
+"""
+
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
-from src.rag import ask_question
+import json
+import os
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+import time
+
+from src.rag import ask_question, get_pipeline
+from src.guardrails import get_safety_guidelines
+from src.logger import logger, log_error, PerformanceTracker
+from src.utils import (
+    parse_query, IntentType, ERROR_MESSAGES, 
+    format_error_message, truncate_text
+)
 
 # ==================== Page Configuration ====================
 st.set_page_config(
-    page_title="Knowledge Assistant Dashboard",
+    page_title="🚀 Expert RAG Assistant | v2.0",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded",
     menu_items={
-        "About": "Real-Time Multi-Source Knowledge Assistant v1.0",
-        "Get help": "mailto:support@company.com",
+        "About": "🚀 Expert RAG Assistant | Version 2.0\n© 2026 Aniruddha Kasar | All Rights Reserved",
+        "Get help": "mailto:support@example.com",
     }
 )
 
-# ==================== Color Scheme ====================
+# ==================== Enhanced Color Scheme ====================
 COLORS = {
-    "primary": "#0066CC",      # Professional Blue
-    "secondary": "#00D4AA",    # Teal Accent
-    "success": "#10B981",      # Green
-    "warning": "#F59E0B",      # Amber
-    "danger": "#EF4444",       # Red
-    "dark_bg": "#0F1419",      # Dark Background
-    "light_bg": "#FFFFFF",     # Light Background
-    "card_bg": "#F8FAFC",      # Card Background
-    "text_primary": "#1F2937", # Dark Text
-    "text_secondary": "#6B7280",# Gray Text
-    "border": "#E5E7EB",       # Light Border
+    "primary": "#667EEA",        # Modern Blue
+    "secondary": "#764BA2",      # Purple Accent
+    "success": "#4ADE80",        # Bright Green
+    "warning": "#FACC15",        # Golden Yellow
+    "danger": "#F87171",         # Soft Red
+    "info": "#06B6D4",           # Cyan
+    "dark_bg": "#0F172A",        # Dark Slate
+    "light_bg": "#F8FAFC",       # Clean White
+    "card_bg": "#FFFFFF",        # Pure White
+    "gradient_start": "#667EEA", # Blue gradient start
+    "gradient_end": "#764BA2",   # Purple gradient end
+    "user_bubble": "#667EEA",    # User message blue
+    "assistant_bubble": "#F1F5F9", # Assistant light gray
+    "text_primary": "#1E293B",   # Dark Slate
+    "text_secondary": "#64748B", # Medium Gray
+    "text_muted": "#94A3B8",     # Light Gray
+    "border": "#E2E8F0",         # Light Border
+    "shadow": "rgba(0,0,0,0.1)", # Soft Shadow
+    "glow": "rgba(102, 126, 234, 0.3)", # Blue Glow
 }
 
-# ==================== Custom CSS Styling ====================
+# ==================== Enhanced Custom CSS Styling ====================
 st.markdown(f"""
     <style>
     :root {{
         --primary-color: {COLORS['primary']};
         --secondary-color: {COLORS['secondary']};
+        --gradient: linear-gradient(135deg, {COLORS['gradient_start']}, {COLORS['gradient_end']});
         --text-color: {COLORS['text_primary']};
+        --glow: {COLORS['glow']};
     }}
-    
+
     * {{
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }}
-    
+
     .main {{
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        padding: 2rem;
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        background-attachment: fixed;
+        min-height: 100vh;
     }}
-    
+
+    /* Enhanced Metric Cards */
     .metric-card {{
-        background: white;
-        border-radius: 12px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.95));
+        backdrop-filter: blur(10px);
+        border-radius: 16px;
         padding: 1.5rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.05);
+        border: 1px solid rgba(255,255,255,0.2);
         border-left: 4px solid {COLORS['primary']};
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        overflow: hidden;
     }}
-    
+
+    .metric-card::before {{
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--gradient);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }}
+
     .metric-card:hover {{
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.15), 0 8px 16px rgba(0,0,0,0.1);
+        border-color: {COLORS['primary']};
     }}
-    
+
+    .metric-card:hover::before {{
+        opacity: 1;
+    }}
+
+    /* Enhanced Section Titles */
     .section-title {{
-        color: {COLORS['primary']};
-        font-size: 1.8rem;
-        font-weight: 700;
-        margin: 2rem 0 1rem 0;
-        border-bottom: 3px solid {COLORS['secondary']};
-        padding-bottom: 0.5rem;
-    }}
-    
-    .chat-message {{
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 0.5rem 0;
-        display: flex;
-        gap: 1rem;
-    }}
-    
-    .chat-user {{
-        background-color: {COLORS['primary']};
-        color: white;
-        border-radius: 12px;
-        margin-left: 2rem;
-    }}
-    
-    .chat-assistant {{
-        background-color: {COLORS['card_bg']};
-        color: {COLORS['text_primary']};
-        border: 1px solid {COLORS['border']};
-        margin-right: 2rem;
-    }}
-    
-    .source-badge {{
+        background: var(--gradient);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        font-size: 2.2rem;
+        font-weight: 800;
+        margin: 2rem 0 1.5rem 0;
+        position: relative;
         display: inline-block;
-        background-color: {COLORS['secondary']};
-        color: white;
-        padding: 0.3rem 0.7rem;
+    }}
+
+    .section-title::after {{
+        content: '';
+        position: absolute;
+        bottom: -5px;
+        left: 0;
+        width: 60px;
+        height: 4px;
+        background: var(--gradient);
+        border-radius: 2px;
+    }}
+
+    /* Modern Chat Interface */
+    .chat-container {{
+        background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9));
+        backdrop-filter: blur(20px);
         border-radius: 20px;
-        font-size: 0.85rem;
-        margin: 0.2rem;
-        font-weight: 600;
+        padding: 2rem;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.8);
+        border: 1px solid rgba(255,255,255,0.3);
+        position: relative;
+        overflow: hidden;
     }}
-    
+
+    .chat-container::before {{
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: var(--gradient);
+    }}
+
+    /* User Messages - Modern Bubbles */
+    .user-message {{
+        display: flex;
+        justify-content: flex-end;
+        margin: 1.5rem 0;
+        animation: slideInRight 0.4s ease-out;
+    }}
+
+    .user-bubble {{
+        background: var(--gradient);
+        color: white;
+        padding: 1rem 1.5rem;
+        border-radius: 20px 20px 4px 20px;
+        max-width: 70%;
+        word-wrap: break-word;
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3), 0 4px 10px rgba(0,0,0,0.1);
+        position: relative;
+        font-weight: 500;
+        line-height: 1.5;
+        border: 2px solid rgba(255,255,255,0.2);
+    }}
+
+    .user-bubble::after {{
+        content: '';
+        position: absolute;
+        bottom: -2px;
+        right: 20px;
+        width: 0;
+        height: 0;
+        border-left: 8px solid transparent;
+        border-right: 8px solid transparent;
+        border-top: 8px solid {COLORS['user_bubble']};
+    }}
+
+    /* Assistant Messages - Clean Cards */
+    .assistant-message {{
+        display: flex;
+        justify-content: flex-start;
+        margin: 1.5rem 0;
+        animation: slideInLeft 0.4s ease-out;
+    }}
+
+    .assistant-bubble {{
+        background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(241,245,249,0.9));
+        color: {COLORS['text_primary']};
+        padding: 1.5rem;
+        border-radius: 20px 20px 20px 4px;
+        max-width: 75%;
+        word-wrap: break-word;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.08), 0 4px 10px rgba(0,0,0,0.05);
+        border: 1px solid rgba(255,255,255,0.8);
+        position: relative;
+        line-height: 1.6;
+        backdrop-filter: blur(10px);
+    }}
+
+    .assistant-bubble::after {{
+        content: '';
+        position: absolute;
+        bottom: -2px;
+        left: 20px;
+        width: 0;
+        height: 0;
+        border-left: 8px solid transparent;
+        border-right: 8px solid transparent;
+        border-top: 8px solid rgba(255,255,255,0.9);
+    }}
+
+    /* Chat Animations */
+    @keyframes slideInRight {{
+        from {{
+            opacity: 0;
+            transform: translateX(30px);
+        }}
+        to {{
+            opacity: 1;
+            transform: translateX(0);
+        }}
+    }}
+
+    @keyframes slideInLeft {{
+        from {{
+            opacity: 0;
+            transform: translateX(-30px);
+        }}
+        to {{
+            opacity: 1;
+            transform: translateX(0);
+        }}
+    }}
+
+    /* Enhanced Session Buttons */
+    .session-button {{
+        background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.8));
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 12px;
+        padding: 0.75rem 1rem;
+        margin: 0.25rem 0;
+        width: 100%;
+        text-align: left;
+        cursor: pointer;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        overflow: hidden;
+        font-weight: 500;
+        color: {COLORS['text_primary']};
+    }}
+
+    .session-button::before {{
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+        transition: left 0.5s ease;
+    }}
+
+    .session-button:hover {{
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+        border-color: {COLORS['primary']};
+        transform: translateX(4px);
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.15);
+    }}
+
+    .session-button:hover::before {{
+        left: 100%;
+    }}
+
+    .session-button.active {{
+        background: var(--gradient);
+        color: white;
+        border-color: {COLORS['primary']};
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+        transform: translateX(4px);
+    }}
+
+    .session-button.active::after {{
+        content: '●';
+        position: absolute;
+        right: 10px;
+        color: rgba(255,255,255,0.8);
+        font-size: 12px;
+    }}
+
+    /* Enhanced Stats */
     .stat-number {{
-        font-size: 2rem;
-        font-weight: 700;
-        color: {COLORS['primary']};
+        font-size: 2.5rem;
+        font-weight: 800;
+        background: var(--gradient);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 0.5rem;
     }}
-    
+
     .stat-label {{
-        font-size: 0.9rem;
+        font-size: 1rem;
         color: {COLORS['text_secondary']};
-        margin-top: 0.5rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }}
+
+    /* Welcome Message Enhancement */
+    .welcome-container {{
+        text-align: center;
+        padding: 4rem 2rem;
+        background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.8));
+        backdrop-filter: blur(20px);
+        border-radius: 24px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        border: 1px solid rgba(255,255,255,0.3);
+        margin: 2rem 0;
+        position: relative;
+        overflow: hidden;
+    }}
+
+    .welcome-container::before {{
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: var(--gradient);
+        opacity: 0.05;
+        z-index: -1;
+    }}
+
+    .welcome-title {{
+        font-size: 2.5rem;
+        font-weight: 800;
+        background: var(--gradient);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 1rem;
+        animation: fadeInUp 0.8s ease-out;
+    }}
+
+    .welcome-subtitle {{
+        font-size: 1.2rem;
+        color: {COLORS['text_secondary']};
+        margin-bottom: 2rem;
+        animation: fadeInUp 0.8s ease-out 0.2s both;
+    }}
+
+    .welcome-tip {{
+        display: inline-block;
+        background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+        color: {COLORS['primary']};
+        padding: 1rem 1.5rem;
+        border-radius: 50px;
+        font-weight: 600;
+        border: 1px solid rgba(102, 126, 234, 0.2);
+        animation: fadeInUp 0.8s ease-out 0.4s both;
+    }}
+
+    @keyframes fadeInUp {{
+        from {{
+            opacity: 0;
+            transform: translateY(30px);
+        }}
+        to {{
+            opacity: 1;
+            transform: translateY(0);
+        }}
+    }}
+
+    /* Enhanced Buttons */
+    .stButton > button {{
+        background: var(--gradient) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        padding: 0.75rem 1.5rem !important;
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3) !important;
+        position: relative !important;
+        overflow: hidden !important;
+    }}
+
+    .stButton > button::before {{
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+        transition: left 0.5s ease;
+    }}
+
+    .stButton > button:hover {{
+        transform: translateY(-2px) !important;
+        box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4) !important;
+    }}
+
+    .stButton > button:hover::before {{
+        left: 100%;
+    }}
+
+    .stButton > button:active {{
+        transform: translateY(0) !important;
+    }}
+
+    /* Enhanced Sidebar */
+    .css-1d391kg {{
+        background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(248,250,252,0.95)) !important;
+        backdrop-filter: blur(20px) !important;
+        border-right: 1px solid rgba(255,255,255,0.3) !important;
+    }}
+
+    /* Enhanced Tabs */
+    .stTabs [data-baseweb="tab-list"] {{
+        background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.8)) !important;
+        backdrop-filter: blur(10px) !important;
+        border-radius: 12px !important;
+        padding: 0.5rem !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1) !important;
+    }}
+
+    .stTabs [data-baseweb="tab"] {{
+        background: transparent !important;
+        border-radius: 8px !important;
+        color: {COLORS['text_secondary']} !important;
+        font-weight: 600 !important;
+        transition: all 0.3s ease !important;
+    }}
+
+    .stTabs [aria-selected="true"] {{
+        background: var(--gradient) !important;
+        color: white !important;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3) !important;
+    }}
+
+    /* Enhanced Chat Input */
+    .stChatInput {{
+        background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9)) !important;
+        backdrop-filter: blur(20px) !important;
+        border-radius: 16px !important;
+        border: 1px solid rgba(255,255,255,0.3) !important;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.1) !important;
+    }}
+
+    /* Scrollbar Styling */
+    ::-webkit-scrollbar {{
+        width: 8px;
+    }}
+
+    ::-webkit-scrollbar-track {{
+        background: rgba(0,0,0,0.05);
+        border-radius: 4px;
+    }}
+
+    ::-webkit-scrollbar-thumb {{
+        background: var(--gradient);
+        border-radius: 4px;
+    }}
+
+    ::-webkit-scrollbar-thumb:hover {{
+        background: linear-gradient(135deg, {COLORS['gradient_start']}, {COLORS['gradient_end']});
     }}
     </style>
     """, unsafe_allow_html=True)
+
+# ==================== Chat Persistence ====================
+SESSIONS_DIR = Path("chat_sessions")
+
+def ensure_sessions_dir():
+    """Ensure the sessions directory exists"""
+    SESSIONS_DIR.mkdir(exist_ok=True)
+
+def save_session(session_id, session_data):
+    """Save a chat session to disk"""
+    ensure_sessions_dir()
+    session_file = SESSIONS_DIR / f"{session_id}.json"
+
+    # Convert datetime objects to strings for JSON serialization
+    serializable_data = session_data.copy()
+    serializable_data["created_at"] = session_data["created_at"].isoformat()
+
+    try:
+        with open(session_file, 'w', encoding='utf-8') as f:
+            json.dump(serializable_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"Failed to save session {session_id}: {e}")
+
+def load_session(session_id):
+    """Load a chat session from disk"""
+    session_file = SESSIONS_DIR / f"{session_id}.json"
+
+    if not session_file.exists():
+        return None
+
+    try:
+        with open(session_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Convert datetime strings back to datetime objects
+        data["created_at"] = datetime.fromisoformat(data["created_at"])
+        return data
+    except Exception as e:
+        st.error(f"Failed to load session {session_id}: {e}")
+        return None
+
+def delete_session_file(session_id):
+    """Delete a chat session file from disk"""
+    session_file = SESSIONS_DIR / f"{session_id}.json"
+
+    try:
+        if session_file.exists():
+            session_file.unlink()  # Delete the file
+    except Exception as e:
+        st.error(f"Failed to delete session file {session_id}: {e}")
+
+def load_all_sessions():
+    """Load all saved chat sessions"""
+    ensure_sessions_dir()
+    sessions = {}
+
+    # Always include default session
+    sessions["default"] = {
+        "messages": [],
+        "created_at": datetime.now(),
+        "title": "New Conversation"
+    }
+
+    # Load saved sessions
+    for session_file in SESSIONS_DIR.glob("*.json"):
+        session_id = session_file.stem
+        if session_id != "default":  # Skip if there's a saved default session
+            session_data = load_session(session_id)
+            if session_data:
+                sessions[session_id] = session_data
+
+    return sessions
+
+def cleanup_old_sessions(max_age_days=30):
+    """Clean up sessions older than specified days"""
+    ensure_sessions_dir()
+    cutoff_date = datetime.now() - timedelta(days=max_age_days)
+
+    for session_file in SESSIONS_DIR.glob("*.json"):
+        session_id = session_file.stem
+        if session_id == "default":
+            continue  # Don't delete default session
+
+        session_data = load_session(session_id)
+        if session_data and session_data["created_at"] < cutoff_date:
+            try:
+                session_file.unlink()
+                # Also remove from memory if loaded
+                if session_id in st.session_state.chat_sessions:
+                    del st.session_state.chat_sessions[session_id]
+            except Exception as e:
+                st.warning(f"Failed to cleanup old session {session_id}: {e}")
+
+def get_session_stats():
+    """Get statistics about saved sessions"""
+    ensure_sessions_dir()
+    session_files = list(SESSIONS_DIR.glob("*.json"))
+    total_sessions = len(session_files)
+
+    # Load all sessions to get stats
+    sessions_data = []
+    for session_file in session_files:
+        session_id = session_file.stem
+        data = load_session(session_id)
+        if data:
+            sessions_data.append(data)
+
+    total_messages = sum(len(s.get("messages", [])) for s in sessions_data)
+    avg_messages_per_session = total_messages / max(total_sessions, 1)
+
+    return {
+        "total_sessions": total_sessions,
+        "total_messages": total_messages,
+        "avg_messages_per_session": avg_messages_per_session
+    }
 
 # ==================== Session State Initialization ====================
 if "messages" not in st.session_state:
@@ -134,12 +625,96 @@ if "avg_response_time" not in st.session_state:
 if "query_accuracy" not in st.session_state:
     st.session_state.query_accuracy = []
 
+# ==================== Chat Session Management ====================
+if "current_session" not in st.session_state:
+    st.session_state.current_session = "default"
+
+if "chat_sessions" not in st.session_state:
+    # Load saved sessions from disk
+    st.session_state.chat_sessions = load_all_sessions()
+
+if "session_counter" not in st.session_state:
+    # Find the lowest available session number
+    existing_sessions = [s for s in st.session_state.chat_sessions.keys() if s.startswith("session_")]
+    if existing_sessions:
+        numbers = sorted([int(s.split("_")[1]) for s in existing_sessions])
+        # Find the lowest missing number starting from 1
+        st.session_state.session_counter = 1
+        for num in numbers:
+            if num == st.session_state.session_counter:
+                st.session_state.session_counter += 1
+            else:
+                break
+    else:
+        st.session_state.session_counter = 1
+
+def create_new_session():
+    """Create a new chat session"""
+    session_id = f"session_{st.session_state.session_counter}"
+    title_number = st.session_state.session_counter
+    st.session_state.session_counter += 1
+    st.session_state.chat_sessions[session_id] = {
+        "messages": [],
+        "created_at": datetime.now(),
+        "title": f"Conversation {title_number}"
+    }
+    # Save to disk
+    save_session(session_id, st.session_state.chat_sessions[session_id])
+    st.session_state.current_session = session_id
+    return session_id
+
+def switch_session(session_id):
+    """Switch to a different chat session"""
+    if session_id in st.session_state.chat_sessions:
+        st.session_state.current_session = session_id
+
+def delete_session(session_id):
+    """Delete a chat session"""
+    if session_id in st.session_state.chat_sessions and session_id != "default":
+        # Delete from memory
+        del st.session_state.chat_sessions[session_id]
+        # Delete from disk
+        delete_session_file(session_id)
+
+        # Reset session counter to reuse deleted numbers
+        existing_sessions = [s for s in st.session_state.chat_sessions.keys() if s.startswith("session_")]
+        if existing_sessions:
+            numbers = sorted([int(s.split("_")[1]) for s in existing_sessions])
+            # Find the lowest missing number starting from 1
+            next_counter = 1
+            for num in numbers:
+                if num == next_counter:
+                    next_counter += 1
+                else:
+                    break
+            st.session_state.session_counter = next_counter
+        else:
+            st.session_state.session_counter = 1
+
+        # Switch to default if current session was deleted
+        if st.session_state.current_session == session_id:
+            st.session_state.current_session = "default"
+
+def get_current_messages():
+    """Get messages for current session"""
+    return st.session_state.chat_sessions[st.session_state.current_session]["messages"]
+
+def add_message_to_current_session(message):
+    """Add a message to the current session"""
+    st.session_state.chat_sessions[st.session_state.current_session]["messages"].append(message)
+
+    # Save session to disk after adding message
+    save_session(st.session_state.current_session, st.session_state.chat_sessions[st.session_state.current_session])
+
+    # Note: Session titles are kept as "Conversation X" format for consistency
+    # Auto-title update based on first message is disabled
+
 # ==================== Header Section ====================
 col1, col2, col3 = st.columns([2, 3, 1])
 
 with col1:
-    st.markdown("## 🧠 Knowledge Assistant")
-    st.markdown("*Real-Time Multi-Source Intelligence Platform*")
+    st.markdown("## 🚀 Real-Time Multi-Source Knowledge Assistant | v1.0")
+    st.markdown("*© 2026 Aniruddha kasar | Designed by Aniruddha Kasar*")
 
 with col3:
     current_time = datetime.now().strftime("%d %b %Y, %H:%M")
@@ -148,121 +723,196 @@ with col3:
 st.divider()
 
 # ==================== Navigation Tabs ====================
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🤖 Chat Assistant",
     "📊 Dashboard",
     "📈 Analytics",
-    "⚙️ Settings"
+    "⚙️ Settings",
+    "🛡️ Safety & Guidelines"
 ])
 
 # ======================= TAB 1: CHAT ASSISTANT =======================
 with tab1:
+    # Session Management Sidebar
+    with st.sidebar:
+        st.markdown("### 💬 Chat Sessions")
+
+        # New Session Button
+        if st.button("➕ New Chat", use_container_width=True):
+            create_new_session()
+            st.rerun()
+
+        st.markdown("---")
+
+        # Session List
+        for session_id, session_data in st.session_state.chat_sessions.items():
+            is_active = session_id == st.session_state.current_session
+            button_label = f"{'🔵' if is_active else '⚪'} {session_data['title']}"
+
+            if st.button(button_label, key=f"session_{session_id}", use_container_width=True):
+                switch_session(session_id)
+                st.rerun()
+
+            # Delete button for non-default sessions
+            if session_id != "default":
+                col1, col2 = st.columns([3, 1])
+                with col2:
+                    if st.button("🗑️", key=f"delete_{session_id}", help="Delete session"):
+                        delete_session(session_id)
+                        st.rerun()
+
+        st.markdown("---")
+        st.markdown(f"**Active:** {st.session_state.chat_sessions[st.session_state.current_session]['title']}")
+
+    # Main Chat Interface
     st.markdown("""
-        <h2 class='section-title'>💬 Ask Your Questions</h2>
+        <h2 class='section-title'>💬 Chat Assistant</h2>
     """, unsafe_allow_html=True)
-    
-    # Chat Container
-    chat_container = st.container()
-    
+
+    # Chat Container with enhanced styling
+    chat_container = st.container(height=600)
+
     with chat_container:
-        # Display Previous Messages
-        for message in st.session_state.messages:
-            if message["role"] == "user":
-                st.markdown(f"""
-                    <div class='chat-message chat-user'>
-                        <div style='flex: 1;'>
-                            <strong style='font-size: 0.9rem;'>You</strong><br/>
-                            {message['content']}
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+        current_messages = get_current_messages()
+
+        if not current_messages:
+            # Welcome message for empty chat
+            st.markdown(f"""
+                <div class='welcome-container'>
+                    <h1 class='welcome-title'>👋 Welcome to the Real-Time Multi-Source Knowledge Assistant!</h1>
+                    <p class='welcome-subtitle'>Start a conversation by typing your question below.</p>
+                    <p class='welcome-tip'>💡 Tip: Create multiple sessions to organize different topics</p>
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            # Display chat history
+            for i, message in enumerate(current_messages):
+                if message["role"] == "user":
+                    # User message - modern bubble design
+                    st.markdown(f"""
+                        <div class='user-message'>
+                            <div class='user-bubble'>
+                                <strong>You</strong><br/>
+                                {message['content']}
+                            </div>
                         </div>
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                    <div class='chat-message chat-assistant'>
-                        <div style='flex: 1;'>
-                            <strong style='font-size: 0.9rem;'>Assistant</strong><br/>
-                            {message['content'][:200]}...
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-    
+                    """, unsafe_allow_html=True)
+                else:
+                    # Assistant message - clean card design
+                    with st.container():
+                        # Assistant header with icon and timing
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.markdown("🤖 **Assistant**")
+                        with col2:
+                            if "time" in message:
+                                st.caption(f"⚡ {message['time']:.2f}s")
+
+                        # Assistant content in modern bubble
+                        st.markdown(f"""
+                            <div class='assistant-message'>
+                                <div class='assistant-bubble'>
+                                    {message['content']}
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+                        # Enhanced Sources display
+                        if "sources" in message and message["sources"]:
+                            with st.expander("📚 **Sources & References**", expanded=False):
+                                for j, source in enumerate(message["sources"][:5]):  # Show max 5 sources
+                                    if hasattr(source, 'page_content'):
+                                        source_preview = source.page_content[:150] + "..." if len(source.page_content) > 150 else source.page_content
+                                        st.markdown(f"""
+                                            <div style='background: linear-gradient(135deg, rgba(102, 126, 234, 0.05), rgba(118, 75, 162, 0.05));
+                                                       border: 1px solid rgba(102, 126, 234, 0.1);
+                                                       border-radius: 8px;
+                                                       padding: 1rem;
+                                                       margin: 0.5rem 0;
+                                                       border-left: 3px solid {COLORS['primary']};'>
+                                                <strong style='color: {COLORS['primary']};'>Source {j+1}</strong><br/>
+                                                <span style='color: {COLORS['text_secondary']}; font-size: 0.9rem;'>{source_preview}</span>
+                                            </div>
+                                        """, unsafe_allow_html=True)
+                                    else:
+                                        st.markdown(f"""
+                                            <div style='background: rgba(4, 174, 128, 0.1);
+                                                       border: 1px solid rgba(4, 174, 128, 0.2);
+                                                       border-radius: 8px;
+                                                       padding: 0.8rem;
+                                                       margin: 0.5rem 0;
+                                                       border-left: 3px solid {COLORS['success']};'>
+                                                <strong style='color: {COLORS['success']};'>Source {j+1}</strong><br/>
+                                                <span style='color: {COLORS['text_secondary']};'>{str(source)[:200]}...</span>
+                                            </div>
+                                        """, unsafe_allow_html=True)
+
     # Input Section
     st.markdown("---")
-    col1, col2 = st.columns([4, 1])
-    
-    with col1:
-        prompt = st.text_input(
-            "Type your question here...",
-            placeholder="What would you like to know?",
-            label_visibility="collapsed"
-        )
-    
-    with col2:
-        submit_btn = st.button("🚀 Send", use_container_width=True)
-    
-    if submit_btn and prompt:
-        # Add user message
-        st.session_state.messages.append({"role": "user", "content": prompt})
+
+    # Chat input with better UX
+    chat_input_container = st.container()
+    with chat_input_container:
+        col1, col2 = st.columns([5, 1])
+
+        with col1:
+            prompt = st.chat_input(
+                "Type your message here...",
+                key="chat_input"
+            )
+
+        with col2:
+            if st.button("🗑️ Clear Chat", help="Clear current conversation"):
+                if st.session_state.current_session != "default":
+                    st.session_state.chat_sessions[st.session_state.current_session]["messages"] = []
+                    # Save cleared session to disk
+                    save_session(st.session_state.current_session, st.session_state.chat_sessions[st.session_state.current_session])
+                else:
+                    st.session_state.chat_sessions["default"]["messages"] = []
+                    # Note: We don't save the default session to disk as it's always recreated
+                st.rerun()
+
+    # Process user input
+    if prompt:
+        # Add user message to current session
+        add_message_to_current_session({"role": "user", "content": prompt})
         st.session_state.query_count += 1
-        
+
         # Generate response
         with st.spinner("🔍 Searching knowledge base..."):
             import time
             start_time = time.time()
-            answer, sources = ask_question(prompt)
+            # Pass conversation history for better context
+            current_messages = get_current_messages()
+            answer, sources = ask_question(prompt, current_messages)
             response_time = time.time() - start_time
             st.session_state.avg_response_time.append(response_time)
-        
-        # Add assistant response
-        st.session_state.messages.append({
+
+        # Add assistant response to current session
+        add_message_to_current_session({
             "role": "assistant",
             "content": answer,
             "sources": sources,
             "time": response_time
         })
-        
+
         st.rerun()
-    
-    # Display Latest Response
-    if st.session_state.messages and st.session_state.messages[-1]["role"] == "assistant":
-        latest = st.session_state.messages[-1]
-        
+
+        st.markdown('</div>', unsafe_allow_html=True)  # Close chat-container
+
+    # Session Statistics
+    if current_messages:
         st.markdown("---")
-        st.markdown("""
-            <h3 style='color: #0066CC; margin-bottom: 1rem;'>📌 Latest Response</h3>
-        """, unsafe_allow_html=True)
-        
-        col1, col2 = st.columns([3, 1])
-        
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(f"""
-                <div style='background: {COLORS['card_bg']}; padding: 1.5rem; border-radius: 12px; border-left: 4px solid {COLORS['secondary']};'>
-                    {latest['content']}
-                </div>
-            """, unsafe_allow_html=True)
-        
+            st.metric("Messages", len(current_messages))
         with col2:
-            st.metric(
-                "Response Time",
-                f"{latest['time']:.2f}s",
-                delta=None if len(st.session_state.avg_response_time) < 2 else f"{st.session_state.avg_response_time[-1] - st.session_state.avg_response_time[-2]:.2f}s"
-            )
-        
-        if latest.get("sources"):
-            st.markdown("""
-                <h4 style='color: #6B7280; margin-top: 1.5rem; margin-bottom: 0.5rem;'>📚 Sources</h4>
-            """, unsafe_allow_html=True)
-            
-            source_cols = st.columns(3)
-            for idx, source in enumerate(latest["sources"][:3]):
-                with source_cols[idx % 3]:
-                    source_text = source.page_content[:100] if hasattr(source, 'page_content') else str(source)[:100]
-                    st.markdown(f"""
-                        <div style='background: {COLORS['card_bg']}; padding: 0.8rem; border-radius: 8px; border-left: 3px solid {COLORS['success']};'>
-                            <small style='color: {COLORS['text_secondary']};'>Source {idx+1}</small><br/>
-                            <span style='color: {COLORS['text_primary']};'>{source_text}...</span>
-                        </div>
-                    """, unsafe_allow_html=True)
+            assistant_msgs = len([m for m in current_messages if m["role"] == "assistant"])
+            avg_time = sum([m.get("time", 0) for m in current_messages if m.get("time")]) / assistant_msgs if assistant_msgs > 0 else 0
+            st.metric("Avg Response Time", f"{avg_time:.2f}s")
+        with col3:
+            st.metric("Session", st.session_state.chat_sessions[st.session_state.current_session]["title"])
 
 # ======================= TAB 2: DASHBOARD =======================
 with tab2:
@@ -538,7 +1188,40 @@ with tab4:
     st.markdown("""
         <h2 class='section-title'>⚙️ Settings & Configuration</h2>
     """, unsafe_allow_html=True)
-    
+
+    # Session Management Section
+    st.markdown("""
+        <h4 style='color: #0066CC; margin-bottom: 1rem;'>💬 Chat Session Management</h4>
+    """, unsafe_allow_html=True)
+
+    # Session Statistics
+    stats = get_session_stats()
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Total Sessions", stats["total_sessions"])
+    with col2:
+        st.metric("Total Messages", stats["total_messages"])
+    with col3:
+        st.metric("Avg Messages/Session", f"{stats['avg_messages_per_session']:.1f}")
+
+    st.markdown("---")
+
+    # Session Management Actions
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("🧹 Cleanup Old Sessions (30+ days)", use_container_width=True):
+            cleanup_old_sessions(30)
+            st.success("✅ Old sessions cleaned up!")
+            st.rerun()
+
+    with col2:
+        if st.button("📊 Refresh Statistics", use_container_width=True):
+            st.rerun()
+
+    st.markdown("---")
+
     # Settings Sections
     col1, col2 = st.columns(2)
     
@@ -591,12 +1274,136 @@ with tab4:
         if st.button("🔄 Reset to Defaults", use_container_width=True):
             st.warning("⚠️ Settings reset to defaults")
 
+# ======================= TAB 5: SAFETY & GUIDELINES =======================
+with tab5:
+    st.markdown("""
+        <h2 class='section-title'>🛡️ Safety Guidelines & Guardrails</h2>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+        <div style='background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); 
+                    color: white; padding: 1.5rem; border-radius: 10px; margin-bottom: 2rem;'>
+        <h3 style='margin: 0 0 1rem 0; color: white;'>🚨 Important Safety Notice</h3>
+        <p style='margin: 0; font-size: 1.1rem; line-height: 1.6;'>
+        This AI assistant incorporates high-level guardrails similar to ChatGPT's safety instructions. 
+        These guardrails help prevent harmful, illegal, or inappropriate content while maintaining 
+        educational and research capabilities.
+        </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Import guardrails for display
+    from src.guardrails import get_safety_guidelines
+
+    guidelines = get_safety_guidelines()
+
+    # Main Guidelines
+    st.markdown("""
+        <h4 style='color: #0066CC; margin-bottom: 1rem;'>📋 Core Safety Guidelines</h4>
+    """, unsafe_allow_html=True)
+
+    for i, guideline in enumerate(guidelines['guidelines'], 1):
+        st.markdown(f"""
+            <div style='background: #F8FAFC; padding: 1rem; border-radius: 8px; 
+                        border-left: 4px solid #667EEA; margin-bottom: 0.5rem;'>
+                <strong>{i}.</strong> {guideline}
+            </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Restricted Categories
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("""
+            <h4 style='color: #DC2626; margin-bottom: 1rem;'>🚫 Restricted Categories</h4>
+        """, unsafe_allow_html=True)
+
+        for category, items in guidelines['restricted_categories'].items():
+            with st.expander(f"📍 {category.replace('_', ' ').title()}", expanded=False):
+                for item in items:
+                    st.markdown(f"• {item}")
+
+    with col2:
+        st.markdown("""
+            <h4 style='color: #059669; margin-bottom: 1rem;'>✅ Safe Contexts</h4>
+        """, unsafe_allow_html=True)
+
+        st.markdown("Content is generally allowed in these educational contexts:")
+        for context in guidelines['safe_contexts']:
+            st.markdown(f"• {context}")
+
+    st.markdown("---")
+
+    # Trigger Keywords
+    st.markdown("""
+        <h4 style='color: #D97706; margin-bottom: 1rem;'>⚠️ Content Monitoring</h4>
+    """, unsafe_allow_html=True)
+
+    st.markdown("The system monitors for these types of content:")
+
+    keyword_cols = st.columns(3)
+    keywords_list = list(guidelines['trigger_keywords'].keys())
+
+    for i, keyword_type in enumerate(keywords_list):
+        col_idx = i % 3
+        with keyword_cols[col_idx]:
+            with st.expander(f"{keyword_type.replace('_', ' ').title()}", expanded=False):
+                keywords = guidelines['trigger_keywords'][keyword_type]
+                for keyword in keywords:
+                    st.markdown(f"• {keyword}")
+
+    st.markdown("---")
+
+    # System Status
+    st.markdown("""
+        <h4 style='color: #7C3AED; margin-bottom: 1rem;'>🔧 System Information</h4>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Guardrails Version", guidelines['version'])
+
+    with col2:
+        st.metric("Last Updated", guidelines['last_updated'][:10])
+
+    with col3:
+        st.metric("Active Categories", len(guidelines['restricted_categories']))
+
+    # Test Guardrails
+    st.markdown("---")
+    st.markdown("""
+        <h4 style='color: #0066CC; margin-bottom: 1rem;'>🧪 Test Guardrails</h4>
+    """, unsafe_allow_html=True)
+
+    test_query = st.text_area("Test a query against the guardrails:", 
+                             placeholder="Enter a test query to see if it passes safety checks...",
+                             height=100)
+
+    if st.button("🔍 Check Safety", use_container_width=True):
+        if test_query.strip():
+            from src.guardrails import check_query
+            is_safe, reason, metadata = check_query(test_query)
+
+            if is_safe:
+                st.success(f"✅ Safe: {reason}")
+            else:
+                st.error(f"🚫 Blocked: {reason}")
+
+            with st.expander("📊 Detailed Analysis", expanded=False):
+                st.json(metadata)
+        else:
+            st.warning("Please enter a query to test.")
+
 # ==================== Footer ====================
 st.divider()
 st.markdown("""
     <div style='text-align: center; color: #6B7280; font-size: 0.9rem; padding: 2rem 0;'>
         <p>🚀 <strong>Real-Time Multi-Source Knowledge Assistant</strong> | Version 1.0</p>
-        <p>© 2026 AI Engineering Team | All Rights Reserved</p>
+        <p>© 2026 Aniruddha kasar | All Rights Reserved</p>
+        <p>Designed by Aniruddha Kasar</p>
         <p style='margin-top: 1rem; font-size: 0.85rem;'>
             <a href='#' style='color: #0066CC; text-decoration: none; margin: 0 1rem;'>Documentation</a> •
             <a href='#' style='color: #0066CC; text-decoration: none; margin: 0 1rem;'>Support</a> •
